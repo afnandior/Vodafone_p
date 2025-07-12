@@ -1,54 +1,36 @@
 # Import libraries
 import pandas as pd
 import numpy as np
-
 from sklearn.model_selection import train_test_split, GridSearchCV, cross_val_score
 from sklearn.metrics import mean_squared_error, r2_score
-
 from sklearn.linear_model import LinearRegression, Ridge, Lasso, ElasticNet
 from sklearn.tree import DecisionTreeRegressor
 from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
-
 from sklearn.preprocessing import StandardScaler, PolynomialFeatures
 from sklearn.pipeline import Pipeline
-
 from sklearn.svm import SVR
 from sklearn.neighbors import KNeighborsRegressor
 from sklearn.neural_network import MLPRegressor
-
 import xgboost as xgb
 import lightgbm as lgb
 
-# Step1 Define function
-
-def regression_pipeline_advanced(df, features, target, test_size=0.2, random_state=42, param_grids=None):
-    """
-    Advanced regression pipeline with:
-    - Multiple models (Linear, Non-linear, Trees, Boosting, SVR, KNN, Neural Network)
-    - Scaling
-    - Cross-validation evaluation
-    - Hyperparameter tuning if desired
-    """
-
-    print(" Starting Advanced Regression Pipeline...")
-
-    # Step2 Data Preprocessing
-
-    print(" Step 2: Preprocessing target column...")
+# 1 Preprocessing Function
+def preprocess_data(df, features, target):
     df[target] = pd.to_numeric(df[target], errors='coerce')
     df = df.dropna(subset=[target] + features)
-
-
-
-    # Step3 Split data
-    
-    print(" Step 3: Splitting data...")
     X = df[features]
     y = df[target]
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=test_size, random_state=random_state)
+    return X, y
 
-    # Step4 Define models
-    print(" Step 4: Defining models...")
+
+# 2 Data Split Function
+
+def split_data(X, y, test_size=0.2, random_state=42):
+    return train_test_split(X, y, test_size=test_size, random_state=random_state)
+
+# 3 Model Definitions Function
+
+def define_models():
     models = {
         "Linear Regression": Pipeline([("scaler", StandardScaler()), ("model", LinearRegression())]),
         "Ridge Regression": Pipeline([("scaler", StandardScaler()), ("model", Ridge())]),
@@ -64,10 +46,49 @@ def regression_pipeline_advanced(df, features, target, test_size=0.2, random_sta
         "KNN Regression": Pipeline([("scaler", StandardScaler()), ("model", KNeighborsRegressor())]),
         "Neural Network (MLPRegressor)": Pipeline([("scaler", StandardScaler()), ("model", MLPRegressor(max_iter=1000))]),
     }
+    return models
 
-    # Step5 Define default param_grids if user didn't provide
+# 4 Train and Evaluate Models Function
 
-    print(" Step 5: Setting hyperparameter grids...")
+def train_and_evaluate_models(models, X_train, X_test, y_train, y_test):
+    results = []
+    for name, model in models.items():
+        model.fit(X_train, y_train)
+        y_pred = model.predict(X_test)
+        mse = mean_squared_error(y_test, y_pred)
+        r2 = r2_score(y_test, y_pred)
+        cv_r2 = cross_val_score(model, X_train, y_train, cv=5, scoring='r2').mean()
+        results.append({
+            "Model": name,
+            "Test_R2": r2,
+            "CV_R2": cv_r2,
+            "Test_MSE": mse,
+            "Model_Object": model
+        })
+    results_df = pd.DataFrame(results).sort_values(by="CV_R2", ascending=False)
+    return results_df
+
+#  5 Hyperparameter Tuning Function
+
+def tune_model(model, X_train, y_train, param_grid):
+    grid = GridSearchCV(model, param_grid, cv=5, scoring="r2")
+    grid.fit(X_train, y_train)
+    return grid.best_estimator_, grid.best_params_
+
+
+# 6 Main Regression Pipeline Function with default param_grids
+
+def regression_pipeline_advanced(df, features, target, test_size=0.2, random_state=42, param_grids=None):
+    X, y = preprocess_data(df, features, target)
+    X_train, X_test, y_train, y_test = split_data(X, y, test_size, random_state)
+    models = define_models()
+    results_df = train_and_evaluate_models(models, X_train, X_test, y_train, y_test)
+
+    best_row = results_df.iloc[0]
+    best_model_name = best_row["Model"]
+    best_model = best_row["Model_Object"]
+
+    #  Define default param_grids if not provided
     if param_grids is None:
         param_grids = {
             "XGBoost": {"n_estimators": [100, 200], "learning_rate": [0.05, 0.1], "max_depth": [3, 5]},
@@ -83,59 +104,10 @@ def regression_pipeline_advanced(df, features, target, test_size=0.2, random_sta
             "Neural Network (MLPRegressor)": {"model__hidden_layer_sizes": [(50,), (100,), (100,50)], "model__activation": ["relu", "tanh"]},
         }
 
-    # Step6 Train and evaluate models
-
-    print(" Step 6: Training models...")
-    results = []
-
-    for name, model in models.items():
-        print(f" Running {name}...")
-        model.fit(X_train, y_train)
-        y_pred = model.predict(X_test)
-
-        mse = mean_squared_error(y_test, y_pred)
-        r2 = r2_score(y_test, y_pred)
-        cv_r2 = cross_val_score(model, X_train, y_train, cv=5, scoring='r2').mean()
-
-        print(f" {name} ➜ Test MSE: {mse:.2f} | Test R2: {r2:.4f} | CV R2: {cv_r2:.4f}")
-
-        results.append({
-            "Model": name,
-            "Test_R2": r2,
-            "CV_R2": cv_r2,
-            "Test_MSE": mse,
-            "Model_Object": model
-        })
-
-
-    # Step7 Sort results
-
-    results_df = pd.DataFrame(results).sort_values(by="CV_R2", ascending=False)
-    print("\n Step 7: Models sorted by CV R2:\n", results_df[["Model", "CV_R2", "Test_R2", "Test_MSE"]])
-
-
-    # Step8 Select best model
-
-    best_row = results_df.iloc[0]
-    best_model_name = best_row["Model"]
-    best_model = best_row["Model_Object"]
-
-    print(f"\n Step 8: Best model is {best_model_name} ➜ CV R2 = {best_row['CV_R2']:.4f}")
-
-
-    # Step9 Hyperparameter tuning if available
-
-    print(" Step 9: Performing hyperparameter tuning if defined...")
     tuned_model = None
+    best_params = None
 
     if best_model_name in param_grids:
-        grid = GridSearchCV(best_model, param_grids[best_model_name], cv=5, scoring="r2")
-        grid.fit(X_train, y_train)
-        tuned_model = grid.best_estimator_
-        print(f" Best params for {best_model_name}: {grid.best_params_}")
-    else:
-        print(f" No hyperparameter tuning defined for {best_model_name}.")
+        tuned_model, best_params = tune_model(best_model, X_train, y_train, param_grids[best_model_name])
 
-    # Step10 Return results
-  
-    return results_df, best_model, tuned_model
+    return results_df, best_model_name, best_model, tuned_model, best_params
