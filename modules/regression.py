@@ -1,5 +1,5 @@
-# Import libraries
 
+# Import libraries
 import pandas as pd
 import numpy as np
 import joblib
@@ -18,7 +18,6 @@ from sklearn.neural_network import MLPRegressor
 import xgboost as xgb
 import lightgbm as lgb
 
-
 # 1 Preprocessing
 def preprocess_data(df, features, target):
     df[target] = pd.to_numeric(df[target], errors='coerce')
@@ -27,11 +26,9 @@ def preprocess_data(df, features, target):
     y = df[target]
     return X, y
 
-
 # 2 Split Data
 def split_data(X, y, test_size=0.2, random_state=42):
     return train_test_split(X, y, test_size=test_size, random_state=random_state)
-
 
 # 3 Define Models
 def define_models():
@@ -52,7 +49,6 @@ def define_models():
     }
     return models
 
-
 # 4 Define Hyperparameters
 def define_param_grids():
     param_grids = {
@@ -69,7 +65,6 @@ def define_param_grids():
         "Neural Network (MLPRegressor)": {"model__hidden_layer_sizes": [(50,), (100,), (100,50)], "model__activation": ["relu", "tanh"]},
     }
     return param_grids
-
 
 # 5 Train & Tune Models
 def train_and_tune_models(models, X_train, X_test, y_train, y_test, param_grids):
@@ -122,16 +117,8 @@ def train_and_tune_models(models, X_train, X_test, y_train, y_test, param_grids)
     results_df = pd.DataFrame(results).sort_values(by="CV_R2", ascending=False)
     return results_df, best_model_name, best_model, tuned_model, best_params
 
-
-# 6 Tune specific model
-def tune_model(model, X_train, y_train, param_grid):
-    grid = GridSearchCV(model, param_grid, cv=5, scoring="r2")
-    grid.fit(X_train, y_train)
-    return grid.best_estimator_, grid.best_params_
-
-
-# 7 Main pipeline
-def regression_pipeline_full(df, features, target, test_size=0.2, random_state=42, param_grids=None, manual_params=None):
+# 6 Main pipeline with custom save path
+def regression_pipeline_full(df, features, target, test_size=0.2, random_state=42, param_grids=None, manual_params=None, model_save_path="best_model.pkl"):
     X, y = preprocess_data(df, features, target)
     X_train, X_test, y_train, y_test = split_data(X, y, test_size, random_state)
 
@@ -149,19 +136,19 @@ def regression_pipeline_full(df, features, target, test_size=0.2, random_state=4
         tuned_model, best_params = tune_model(best_model, X_train, y_train, manual_params)
         print(f" Manual tuning completed. Best Params: {best_params}")
 
-    joblib.dump(best_model, "best_model.pkl")
-    print(" Best model saved as best_model.pkl")
+    joblib.dump(best_model, model_save_path)
+    print(f" Best model saved as {model_save_path}")
 
     return results_df, best_model_name, best_model, tuned_model, best_params
 
-
-# 8 Prediction function
+# 7 Prediction function
 def predict_new_data(model, new_data_df, features):
     X_new = new_data_df[features]
     predictions = model.predict(X_new)
     return predictions
 
-
-# 9 Load model function
+# 8 Load model function
 def load_model(path="best_model.pkl"):
     return joblib.load(path)
+
+
