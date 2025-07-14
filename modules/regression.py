@@ -1,14 +1,15 @@
-# 1 Import libraries
 import pandas as pd
 import numpy as np
 import joblib
+import datetime
+import os
 
 from sklearn.model_selection import train_test_split, GridSearchCV, cross_val_score
 from sklearn.metrics import mean_squared_error, r2_score
 from sklearn.linear_model import LinearRegression, Ridge, Lasso, ElasticNet
 from sklearn.tree import DecisionTreeRegressor
 from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
-from sklearn.preprocessing import StandardScaler, PolynomialFeatures
+from sklearn.preprocessing import RobustScaler, PolynomialFeatures
 from sklearn.pipeline import Pipeline
 from sklearn.svm import SVR
 from sklearn.neighbors import KNeighborsRegressor
@@ -17,141 +18,182 @@ from sklearn.neural_network import MLPRegressor
 import xgboost as xgb
 import lightgbm as lgb
 
-# 2 Preprocessing
-def preprocess_data(df, features, target):
-    df[target] = pd.to_numeric(df[target], errors='coerce')
-    df = df.dropna(subset=[target] + features)
-    X = df[features]
-    y = df[target]
-    return X, y
 
-# 3 Split Data
-def split_data(X, y, test_size=0.2, random_state=42):
-    return train_test_split(X, y, test_size=test_size, random_state=random_state)
+class RegressionTool:
+    def __init__(self, save_dir="models"):
+        self.save_dir = save_dir
+        if not os.path.exists(self.save_dir):
+            os.makedirs(self.save_dir)
 
-# 4 Define Models
-def define_models():
-    models = {
-        "Linear Regression": Pipeline([("scaler", StandardScaler()), ("model", LinearRegression())]),
-        "Ridge Regression": Pipeline([("scaler", StandardScaler()), ("model", Ridge())]),
-        "Lasso Regression": Pipeline([("scaler", StandardScaler()), ("model", Lasso())]),
-        "ElasticNet Regression": Pipeline([("scaler", StandardScaler()), ("model", ElasticNet())]),
-        "Decision Tree": DecisionTreeRegressor(),
-        "Random Forest": RandomForestRegressor(),
-        "Gradient Boosting": GradientBoostingRegressor(),
-        "XGBoost": xgb.XGBRegressor(),
-        "LightGBM": lgb.LGBMRegressor(),
-        "Polynomial (deg=2)": Pipeline([("poly", PolynomialFeatures(degree=2)), ("scaler", StandardScaler()), ("linear", LinearRegression())]),
-        "SVR": Pipeline([("scaler", StandardScaler()), ("model", SVR())]),
-        "KNN Regression": Pipeline([("scaler", StandardScaler()), ("model", KNeighborsRegressor())]),
-        "Neural Network (MLPRegressor)": Pipeline([("scaler", StandardScaler()), ("model", MLPRegressor(max_iter=1000))]),
-    }
-    return models
+    def remove_outliers_iqr(self, df, features):
+        for col in features:
+            Q1 = df[col].quantile(0.25)
+            Q3 = df[col].quantile(0.75)
+            IQR = Q3 - Q1
+            lower = Q1 - 1.5 * IQR
+            upper = Q3 + 1.5 * IQR
+            df = df[(df[col] >= lower) & (df[col] <= upper)]
+        return df
 
-# 5 Define Hyperparameters
-def define_param_grids():
-    param_grids = {
-        "Polynomial (deg=2)": {"poly__degree": [2, 3]},
-        "Ridge Regression": {"model__alpha": [0.1, 1.0, 10.0]},
-        "Lasso Regression": {"model__alpha": [0.01, 0.1, 1.0]},
-        "ElasticNet Regression": {"model__alpha": [0.01, 0.1, 1.0], "model__l1_ratio": [0.2, 0.5, 0.8]},
-        "Decision Tree": {"max_depth": [3, 5, 10]},
-        "Random Forest": {"n_estimators": [50, 100, 200]},
-        "Gradient Boosting": {"n_estimators": [50, 100, 200]},
-        "XGBoost": {"n_estimators": [100, 200], "learning_rate": [0.05, 0.1], "max_depth": [3, 5]},
-        "LightGBM": {"n_estimators": [100, 200], "learning_rate": [0.05, 0.1], "max_depth": [3, 5]},
-        "SVR": {"model__kernel": ["linear", "rbf"], "model__C": [0.1, 1, 10]},
-        "KNN Regression": {"model__n_neighbors": [3, 5, 10]},
-        "Neural Network (MLPRegressor)": {"model__hidden_layer_sizes": [(50,), (100,), (100,50)], "model__activation": ["relu", "tanh"]},
-    }
-    return param_grids
+    def auto_preprocess(self, df, features, target):
+       
+        df[target] = pd.to_numeric(df[target], errors='coerce')
+        df = df.dropna(subset=[target] + features)
 
-# 6 Train & Tune Models
-def train_and_tune_models(models, X_train, X_test, y_train, y_test, param_grids, manual_hyperparams=None):
-    results = []
-    best_r2 = -np.inf
-    best_model_name = None
-    best_model = None
-    best_params = None
-    tuned_model = None
+        numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+        if target in numeric_cols:
+            numeric_cols.remove(target)
+        categorical_cols = df.select_dtypes(exclude=[np.number]).columns.tolist()
 
-    for name, model in models.items():
-        try:
-            print(f"\n Training {name} ...")
+        df[numeric_cols] = df[numeric_cols].fillna(df[numeric_cols].median())
 
-            # Apply manual hyperparameters if provided
-            if manual_hyperparams and name in manual_hyperparams:
-                print(f" Applying manual hyperparameters for {name}: {manual_hyperparams[name]}")
-                model.set_params(**manual_hyperparams[name])
+     
+        if numeric_cols:
+            df = self.remove_outliers_iqr(df, numeric_cols + [target])
 
-            model.fit(X_train, y_train)
-            y_pred = model.predict(X_test)
-            mse = mean_squared_error(y_test, y_pred)
-            r2 = r2_score(y_test, y_pred)
-            cv_r2 = cross_val_score(model, X_train, y_train, cv=5, scoring='r2').mean()
+        scaler = RobustScaler()
+        if numeric_cols:
+            df[numeric_cols] = scaler.fit_transform(df[numeric_cols])
 
-            this_best_params = manual_hyperparams.get(name) if manual_hyperparams else None
-            this_tuned_r2 = None
-            this_tuned_model = None
+        df[categorical_cols] = df[categorical_cols].fillna('Unknown')
 
-            # Perform GridSearchCV tuning if no manual hyperparameters
-            if not (manual_hyperparams and name in manual_hyperparams) and name in param_grids:
-                print(f" Performing GridSearchCV for {name} ...")
-                grid = GridSearchCV(model, param_grids[name], cv=5, scoring="r2")
-                grid.fit(X_train, y_train)
-                this_tuned_model = grid.best_estimator_
-                this_tuned_r2 = grid.best_score_
-                this_best_params = grid.best_params_
+     
+        if categorical_cols:
+            df = pd.get_dummies(df, columns=categorical_cols, drop_first=True)
 
-            # Update best model
-            if cv_r2 > best_r2:
-                best_r2 = cv_r2
-                best_model_name = name
-                best_model = model
-                tuned_model = this_tuned_model
-                best_params = this_best_params
+        X = df[features]
+        y = df[target]
+        return X, y
 
-            results.append({
-                "Model": name,
-                "Test_R2": r2,
-                "CV_R2": cv_r2,
-                "Test_MSE": mse,
-                "Best_Params": this_best_params,
-                "Tuned_CV_R2": this_tuned_r2
-            })
-        except Exception as e:
-            print(f" Error in model {name}: {e}")
+    def split_data(self, X, y, test_size=0.2, random_state=42):
+        return train_test_split(X, y, test_size=test_size, random_state=random_state)
 
-    results_df = pd.DataFrame(results).sort_values(by="CV_R2", ascending=False).reset_index(drop=True)
-    return results_df, best_model_name, best_model, tuned_model, best_params
+    def define_models(self):
+        models = {
+            "Linear Regression": Pipeline([("scaler", RobustScaler()), ("model", LinearRegression())]),
+            "Ridge Regression": Pipeline([("scaler", RobustScaler()), ("model", Ridge())]),
+            "Lasso Regression": Pipeline([("scaler", RobustScaler()), ("model", Lasso())]),
+            "ElasticNet Regression": Pipeline([("scaler", RobustScaler()), ("model", ElasticNet())]),
+            "Decision Tree": DecisionTreeRegressor(),
+            "Random Forest": RandomForestRegressor(),
+            "Gradient Boosting": GradientBoostingRegressor(),
+            "XGBoost": xgb.XGBRegressor(),
+            "LightGBM": lgb.LGBMRegressor(),
+            "Polynomial (deg=2)": Pipeline([("poly", PolynomialFeatures(degree=2)), ("scaler", RobustScaler()), ("linear", LinearRegression())]),
+            "SVR": Pipeline([("scaler", RobustScaler()), ("model", SVR())]),
+            "KNN Regression": Pipeline([("scaler", RobustScaler()), ("model", KNeighborsRegressor())]),
+            "Neural Network": Pipeline([("scaler", RobustScaler()), ("model", MLPRegressor(max_iter=1000))]),
+        }
+        return models
 
-# 7 Main pipeline
-def regression_pipeline_full(df, features, target, model_save_path="best_model.pkl", manual_hyperparams=None, save_model=True):
-    X, y = preprocess_data(df, features, target)
-    X_train, X_test, y_train, y_test = split_data(X, y)
+    def define_param_grids(self):
+        param_grids = {
+            "Polynomial (deg=2)": {"poly__degree": [2, 3]},
+            "Ridge Regression": {"model__alpha": [0.1, 1.0, 10.0]},
+            "Lasso Regression": {"model__alpha": [0.01, 0.1, 1.0]},
+            "ElasticNet Regression": {"model__alpha": [0.01, 0.1, 1.0], "model__l1_ratio": [0.2, 0.5, 0.8]},
+            "Decision Tree": {"max_depth": [3, 5, 10]},
+            "Random Forest": {"n_estimators": [50, 100, 200]},
+            "Gradient Boosting": {"n_estimators": [50, 100, 200]},
+            "XGBoost": {"n_estimators": [100, 200], "learning_rate": [0.05, 0.1], "max_depth": [3, 5]},
+            "LightGBM": {"n_estimators": [100, 200], "learning_rate": [0.05, 0.1], "max_depth": [3, 5]},
+            "SVR": {"model__kernel": ["linear", "rbf"], "model__C": [0.1, 1, 10]},
+            "KNN Regression": {"model__n_neighbors": [3, 5, 10]},
+            "Neural Network": {"model__hidden_layer_sizes": [(50,), (100,), (100,50)], "model__activation": ["relu", "tanh"]},
+        }
+        return param_grids
 
-    models = define_models()
-    param_grids = define_param_grids()
+    def train(self, df, features, target, manual_hyperparams=None):
+        df = df[features + [target]]
+        X, y = self.auto_preprocess(df, features, target)
+        X_train, X_test, y_train, y_test = self.split_data(X, y)
 
-    results_df, best_model_name, best_model, tuned_model, best_params = train_and_tune_models(
-        models, X_train, X_test, y_train, y_test, param_grids, manual_hyperparams
-    )
+        models = self.define_models()
+        param_grids = self.define_param_grids()
 
-    if save_model:
-        joblib.dump(best_model, model_save_path)
-        print(f"\n Best model saved as {model_save_path}")
-    else:
-        print("\nℹ️ Model not saved (save_model=False)")
+        results = []
+        best_r2 = -np.inf
+        best_model_name = None
+        best_model = None
+        best_params = None
 
-    return results_df, best_model_name, best_model, tuned_model, best_params
+        for name, model in models.items():
+            try:
+                if manual_hyperparams and name in manual_hyperparams:
+                    model.set_params(**manual_hyperparams[name])
 
-# 8 Prediction function
-def predict_new_data(model, new_data_df, features):
-    X_new = new_data_df[features]
-    predictions = model.predict(X_new)
-    return predictions.round(2)
+                model.fit(X_train, y_train)
+                y_pred = model.predict(X_test)
+                mse = mean_squared_error(y_test, y_pred)
+                r2 = r2_score(y_test, y_pred)
+                cv_r2 = cross_val_score(model, X_train, y_train, cv=5, scoring='r2').mean()
 
-# 9 Load model
-def load_model(path="best_model.pkl"):
-    return joblib.load(path)
+                this_best_params = manual_hyperparams.get(name) if manual_hyperparams else None
+
+                if not (manual_hyperparams and name in manual_hyperparams) and name in param_grids:
+                    grid = GridSearchCV(model, param_grids[name], cv=5, scoring="r2")
+                    grid.fit(X_train, y_train)
+                    model = grid.best_estimator_
+                    this_best_params = grid.best_params_
+
+                if cv_r2 > best_r2:
+                    best_r2 = cv_r2
+                    best_model_name = name
+                    best_model = model
+                    best_params = this_best_params
+
+                results.append({
+                    "Model": name,
+                    "Test_R2": round(r2,4),
+                    "CV_R2": round(cv_r2,4),
+                    "Test_MSE": round(mse,4),
+                    "Best_Params": this_best_params
+                })
+            except Exception as e:
+                results.append({"Model": name, "Error": str(e)})
+
+        results_df = pd.DataFrame(results).sort_values(by="CV_R2", ascending=False).reset_index(drop=True)
+
+        model_path = self.save_model_and_log(best_model, best_model_name)
+
+        return {
+            "best_model": best_model_name,
+            "best_params": best_params,
+            "results": results_df,
+            "model_path": model_path
+        }
+
+    def save_model_and_log(self, model, model_name):
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        model_filename = f"{model_name.replace(' ', '_')}_{timestamp}.pkl"
+        model_path = os.path.join(self.save_dir, model_filename)
+        joblib.dump(model, model_path)
+
+        log_file = os.path.join(self.save_dir, "models_log.csv")
+        log_entry = {
+            "timestamp": timestamp,
+            "model_name": model_name,
+            "model_path": model_path
+        }
+        log_df = pd.DataFrame([log_entry])
+
+        if os.path.exists(log_file):
+            log_df.to_csv(log_file, mode='a', header=False, index=False)
+        else:
+            log_df.to_csv(log_file, index=False)
+
+        return model_path
+
+    def predict(self, model_path, new_data_df):
+        model = joblib.load(model_path)
+        preds = model.predict(new_data_df)
+        return preds.round(2)
+
+    def read_models_log(self):
+        log_file = os.path.join(self.save_dir, "models_log.csv")
+        if os.path.exists(log_file):
+            return pd.read_csv(log_file)
+        else:
+            return pd.DataFrame()
+
 
