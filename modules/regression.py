@@ -36,7 +36,7 @@ class RegressionTool:
         return df
 
     def auto_preprocess(self, df, features, target):
-       
+
         df[target] = pd.to_numeric(df[target], errors='coerce')
         df = df.dropna(subset=[target] + features)
 
@@ -47,7 +47,7 @@ class RegressionTool:
 
         df[numeric_cols] = df[numeric_cols].fillna(df[numeric_cols].median())
 
-     
+
         if numeric_cols:
             df = self.remove_outliers_iqr(df, numeric_cols + [target])
 
@@ -57,7 +57,7 @@ class RegressionTool:
 
         df[categorical_cols] = df[categorical_cols].fillna('Unknown')
 
-     
+
         if categorical_cols:
             df = pd.get_dummies(df, columns=categorical_cols, drop_first=True)
 
@@ -195,5 +195,4 @@ class RegressionTool:
             return pd.read_csv(log_file)
         else:
             return pd.DataFrame()
-
 
