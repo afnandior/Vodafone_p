@@ -19,7 +19,6 @@ from sklearn.neural_network import MLPRegressor
 import xgboost as xgb
 import lightgbm as lgb
 
-
 class RegressionTool:
     def __init__(self, save_dir="models"):
         self.save_dir = save_dir
@@ -76,7 +75,11 @@ class RegressionTool:
             "Gradient Boosting": GradientBoostingRegressor(),
             "XGBoost": xgb.XGBRegressor(),
             "LightGBM": lgb.LGBMRegressor(),
-            "Polynomial (deg=2)": Pipeline([("poly", PolynomialFeatures(degree=2)), ("scaler", RobustScaler()), ("linear", LinearRegression())]),
+            "Polynomial (deg=2)": Pipeline([
+                ("poly", PolynomialFeatures(degree=2)),
+                ("scaler", RobustScaler()),
+                ("linear", LinearRegression())
+            ]),
             "SVR": Pipeline([("scaler", RobustScaler()), ("model", SVR())]),
             "KNN Regression": Pipeline([("scaler", RobustScaler()), ("model", KNeighborsRegressor())]),
             "Neural Network": Pipeline([("scaler", RobustScaler()), ("model", MLPRegressor(max_iter=1000))]),
@@ -95,7 +98,10 @@ class RegressionTool:
             "LightGBM": {"n_estimators": [100, 200], "learning_rate": [0.05, 0.1], "max_depth": [3, 5]},
             "SVR": {"model__kernel": ["linear", "rbf"], "model__C": [0.1, 1, 10]},
             "KNN Regression": {"model__n_neighbors": [3, 5, 10]},
-            "Neural Network": {"model__hidden_layer_sizes": [(50,), (100,), (100, 50)], "model__activation": ["relu", "tanh"]},
+            "Neural Network": {
+                "model__hidden_layer_sizes": [(50,), (100,), (100, 50)],
+                "model__activation": ["relu", "tanh"]
+            },
         }
 
     def train(self, df, features, target, manual_hyperparams=None):
@@ -198,8 +204,12 @@ class RegressionTool:
 
         required_features = metadata["features"]
         missing = [f for f in required_features if f not in new_data_df.columns]
+
         if missing:
-            raise ValueError(f"Missing required features: {missing}")
+            missing_str = ", ".join(missing)
+            return (f" Prediction failed: The uploaded data is missing required features: {missing_str}. "
+                    f"Please ensure you're using the same features used during training.\n"
+                    f"If your data has changed, consider retraining the model with the updated features.")
 
         new_data_df = new_data_df[required_features]
         new_data_df = new_data_df.fillna(new_data_df.median(numeric_only=True))
@@ -208,10 +218,6 @@ class RegressionTool:
         return preds.round(2)
 
     def predict_or_retrain(self, df, features, target, model_path=None):
-        """
-        لو الموديل موجود ومناسب، يستخدمه للتنبؤ.
-        لو مش موجود أو الفيتشر مختلفة، يعمل تدريب جديد.
-        """
         if model_path and os.path.exists(model_path):
             meta_path = model_path.replace(".pkl", "_meta.json")
             if os.path.exists(meta_path):
@@ -235,3 +241,19 @@ class RegressionTool:
             return pd.read_csv(log_file)
         else:
             return pd.DataFrame()
+
+    def delete_model(self, model_path):
+        try:
+            if os.path.exists(model_path):
+                os.remove(model_path)
+            metadata_path = model_path.replace(".pkl", "_meta.json")
+            if os.path.exists(metadata_path):
+                os.remove(metadata_path)
+            log_file = os.path.join(self.save_dir, "models_log.csv")
+            if os.path.exists(log_file):
+                log_df = pd.read_csv(log_file)
+                log_df = log_df[log_df["model_path"] != model_path]
+                log_df.to_csv(log_file, index=False)
+            return f" Model and metadata deleted successfully: {os.path.basename(model_path)}"
+        except Exception as e:
+            return f" Error while deleting model: {str(e)}"
