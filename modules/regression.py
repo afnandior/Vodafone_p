@@ -151,21 +151,18 @@ class RegressionTool:
 
         model_path = self.save_model_and_log(best_model, best_model_name)
 
-        # Save metadata with selected features/target
         metadata = {
             "features": features,
             "target": target
         }
-        metadata_path = model_path.replace(".pkl", "_meta.json")
-        with open(metadata_path, "w") as f:
+        with open(model_path.replace(".pkl", "_meta.json"), "w") as f:
             json.dump(metadata, f)
 
         return {
             "best_model": best_model_name,
             "best_params": best_params,
             "results": results_df,
-            "model_path": model_path,
-            "metadata_path": metadata_path
+            "model_path": model_path
         }
 
     def save_model_and_log(self, model, model_name):
@@ -190,30 +187,47 @@ class RegressionTool:
         return model_path
 
     def predict(self, model_path, new_data_df):
-        # Load model
         model = joblib.load(model_path)
 
-        # Load and validate metadata
         metadata_path = model_path.replace(".pkl", "_meta.json")
         if not os.path.exists(metadata_path):
-            raise ValueError("Metadata file not found. Cannot verify features and target.")
+            raise ValueError("Metadata not found.")
 
         with open(metadata_path, "r") as f:
             metadata = json.load(f)
 
         required_features = metadata["features"]
+        missing = [f for f in required_features if f not in new_data_df.columns]
+        if missing:
+            raise ValueError(f"Missing required features: {missing}")
 
-        missing_features = [col for col in required_features if col not in new_data_df.columns]
-        if missing_features:
-            raise ValueError(f"Missing required features in the uploaded file: {missing_features}")
-
-        # Preprocess input for prediction
         new_data_df = new_data_df[required_features]
         new_data_df = new_data_df.fillna(new_data_df.median(numeric_only=True))
 
-        # Predict
         preds = model.predict(new_data_df)
         return preds.round(2)
+
+    def predict_or_retrain(self, df, features, target, model_path=None):
+        """
+        لو الموديل موجود ومناسب، يستخدمه للتنبؤ.
+        لو مش موجود أو الفيتشر مختلفة، يعمل تدريب جديد.
+        """
+        if model_path and os.path.exists(model_path):
+            meta_path = model_path.replace(".pkl", "_meta.json")
+            if os.path.exists(meta_path):
+                with open(meta_path, "r") as f:
+                    metadata = json.load(f)
+                if metadata["features"] == features and metadata["target"] == target:
+                    return self.predict(model_path, df)
+                else:
+                    print(" Features or target don’t match saved model. Retraining a new model...")
+            else:
+                print(" Metadata not found. Retraining model...")
+        else:
+            print(" Model path not found. Training a new model...")
+
+        result = self.train(df, features, target)
+        return result["best_model"].predict(df[features])
 
     def read_models_log(self):
         log_file = os.path.join(self.save_dir, "models_log.csv")
