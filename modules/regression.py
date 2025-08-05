@@ -3,6 +3,7 @@ import numpy as np
 import joblib
 import datetime
 import os
+import json
 
 from sklearn.model_selection import train_test_split, GridSearchCV, cross_val_score
 from sklearn.metrics import mean_squared_error, r2_score
@@ -36,7 +37,6 @@ class RegressionTool:
         return df
 
     def auto_preprocess(self, df, features, target):
-
         df[target] = pd.to_numeric(df[target], errors='coerce')
         df = df.dropna(subset=[target] + features)
 
@@ -47,7 +47,6 @@ class RegressionTool:
 
         df[numeric_cols] = df[numeric_cols].fillna(df[numeric_cols].median())
 
-
         if numeric_cols:
             df = self.remove_outliers_iqr(df, numeric_cols + [target])
 
@@ -56,8 +55,6 @@ class RegressionTool:
             df[numeric_cols] = scaler.fit_transform(df[numeric_cols])
 
         df[categorical_cols] = df[categorical_cols].fillna('Unknown')
-
-
         if categorical_cols:
             df = pd.get_dummies(df, columns=categorical_cols, drop_first=True)
 
@@ -69,7 +66,7 @@ class RegressionTool:
         return train_test_split(X, y, test_size=test_size, random_state=random_state)
 
     def define_models(self):
-        models = {
+        return {
             "Linear Regression": Pipeline([("scaler", RobustScaler()), ("model", LinearRegression())]),
             "Ridge Regression": Pipeline([("scaler", RobustScaler()), ("model", Ridge())]),
             "Lasso Regression": Pipeline([("scaler", RobustScaler()), ("model", Lasso())]),
@@ -84,10 +81,9 @@ class RegressionTool:
             "KNN Regression": Pipeline([("scaler", RobustScaler()), ("model", KNeighborsRegressor())]),
             "Neural Network": Pipeline([("scaler", RobustScaler()), ("model", MLPRegressor(max_iter=1000))]),
         }
-        return models
 
     def define_param_grids(self):
-        param_grids = {
+        return {
             "Polynomial (deg=2)": {"poly__degree": [2, 3]},
             "Ridge Regression": {"model__alpha": [0.1, 1.0, 10.0]},
             "Lasso Regression": {"model__alpha": [0.01, 0.1, 1.0]},
@@ -99,9 +95,8 @@ class RegressionTool:
             "LightGBM": {"n_estimators": [100, 200], "learning_rate": [0.05, 0.1], "max_depth": [3, 5]},
             "SVR": {"model__kernel": ["linear", "rbf"], "model__C": [0.1, 1, 10]},
             "KNN Regression": {"model__n_neighbors": [3, 5, 10]},
-            "Neural Network": {"model__hidden_layer_sizes": [(50,), (100,), (100,50)], "model__activation": ["relu", "tanh"]},
+            "Neural Network": {"model__hidden_layer_sizes": [(50,), (100,), (100, 50)], "model__activation": ["relu", "tanh"]},
         }
-        return param_grids
 
     def train(self, df, features, target, manual_hyperparams=None):
         df = df[features + [target]]
@@ -144,9 +139,9 @@ class RegressionTool:
 
                 results.append({
                     "Model": name,
-                    "Test_R2": round(r2,4),
-                    "CV_R2": round(cv_r2,4),
-                    "Test_MSE": round(mse,4),
+                    "Test_R2": round(r2, 4),
+                    "CV_R2": round(cv_r2, 4),
+                    "Test_MSE": round(mse, 4),
                     "Best_Params": this_best_params
                 })
             except Exception as e:
@@ -156,11 +151,21 @@ class RegressionTool:
 
         model_path = self.save_model_and_log(best_model, best_model_name)
 
+        # Save metadata with selected features/target
+        metadata = {
+            "features": features,
+            "target": target
+        }
+        metadata_path = model_path.replace(".pkl", "_meta.json")
+        with open(metadata_path, "w") as f:
+            json.dump(metadata, f)
+
         return {
             "best_model": best_model_name,
             "best_params": best_params,
             "results": results_df,
-            "model_path": model_path
+            "model_path": model_path,
+            "metadata_path": metadata_path
         }
 
     def save_model_and_log(self, model, model_name):
@@ -175,8 +180,8 @@ class RegressionTool:
             "model_name": model_name,
             "model_path": model_path
         }
-        log_df = pd.DataFrame([log_entry])
 
+        log_df = pd.DataFrame([log_entry])
         if os.path.exists(log_file):
             log_df.to_csv(log_file, mode='a', header=False, index=False)
         else:
@@ -185,7 +190,28 @@ class RegressionTool:
         return model_path
 
     def predict(self, model_path, new_data_df):
+        # Load model
         model = joblib.load(model_path)
+
+        # Load and validate metadata
+        metadata_path = model_path.replace(".pkl", "_meta.json")
+        if not os.path.exists(metadata_path):
+            raise ValueError("Metadata file not found. Cannot verify features and target.")
+
+        with open(metadata_path, "r") as f:
+            metadata = json.load(f)
+
+        required_features = metadata["features"]
+
+        missing_features = [col for col in required_features if col not in new_data_df.columns]
+        if missing_features:
+            raise ValueError(f"Missing required features in the uploaded file: {missing_features}")
+
+        # Preprocess input for prediction
+        new_data_df = new_data_df[required_features]
+        new_data_df = new_data_df.fillna(new_data_df.median(numeric_only=True))
+
+        # Predict
         preds = model.predict(new_data_df)
         return preds.round(2)
 
@@ -195,4 +221,3 @@ class RegressionTool:
             return pd.read_csv(log_file)
         else:
             return pd.DataFrame()
-
